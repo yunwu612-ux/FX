@@ -19,7 +19,10 @@ public sealed class MainForm : Form
     readonly System.Windows.Forms.Timer saveTimer = new() { Interval = 5000 };
     readonly Random rng = new();
     readonly Dictionary<string, double> previousPrices = new();
-    readonly List<double> chartPrices = new();
+    readonly List<Candle> candles = new();
+    int ticksInCandle = 0;
+
+    readonly record struct Candle(double Open, double High, double Low, double Close);
     readonly Label balanceValue = new();
     readonly Label equityValue = new();
     readonly Label pnlValue = new();
@@ -27,11 +30,13 @@ public sealed class MainForm : Form
     readonly Label marginLevelValue = new();
     readonly Label pairPrice = new();
     readonly Label pairChange = new();
+    readonly Label selectedPairValue = new();
+    readonly Label tradePriceValue = new();
     readonly Label statusLabel = new();
     readonly ComboBox pairBox = new();
     readonly ComboBox leverageBox = new();
     readonly NumericUpDown lotsBox = new();
-    readonly Panel chart = new();
+    readonly BufferedPanel chart = new();
     readonly DataGridView positionsGrid = new();
     readonly DataGridView historyGrid = new();
     readonly Label bidValue = new();
@@ -45,9 +50,9 @@ public sealed class MainForm : Form
 
     public MainForm()
     {
-        Text = "FX Simulator V1.1 | 虚拟外汇交易终端";
-        MinimumSize = new Size(1080, 760);
-        Size = new Size(1360, 850);
+        Text = "FX Simulator V2.0 | 虚拟外汇交易终端";
+        MinimumSize = new Size(1040, 720);
+        Size = new Size(1440, 900);
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = bg;
         ForeColor = text;
@@ -78,7 +83,7 @@ public sealed class MainForm : Form
         var header = new Panel { Dock = DockStyle.Fill, BackColor = bg };
         var title = new Label { Text = "FX  /  SIMULATOR", Font = new Font("Microsoft YaHei UI", 19, FontStyle.Bold), ForeColor = pink, AutoSize = true, Location = new Point(4, 3) };
         var subtitle = new Label { Text = "虚拟市场 · 自由交易 · 风险与保证金模拟", ForeColor = muted, AutoSize = true, Location = new Point(7, 36) };
-        var version = new Label { Text = "V1.1  •  OFFLINE MODE", ForeColor = muted, AutoSize = true, Anchor = AnchorStyles.Top | AnchorStyles.Right };
+        var version = new Label { Text = "V2.0  •  OFFLINE MODE", ForeColor = muted, AutoSize = true, Anchor = AnchorStyles.Top | AnchorStyles.Right };
         header.Controls.AddRange(new Control[] { title, subtitle, version });
         header.Resize += (_, _) => version.Location = new Point(header.ClientSize.Width - version.Width - 8, 18);
         root.Controls.Add(header, 0, 0);
@@ -99,11 +104,39 @@ public sealed class MainForm : Form
         body.RowStyles.Add(new RowStyle(SizeType.Percent, 42));
         root.Controls.Add(body, 0, 2);
 
-        var chartCard = MakeCard("MARKET CHART  /  虚拟行情");
+        // Market card uses a dedicated toolbar row so the currency selector is always visible.
+        var chartCard = new Panel { Dock = DockStyle.Fill, BackColor = panel, Padding = new Padding(12), Margin = new Padding(0, 0, 10, 10) };
+        var marketLayout = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = panel, ColumnCount = 1, RowCount = 3, Padding = new Padding(0) };
+        marketLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
+        marketLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
+        marketLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        var marketHeading = new Label { Text = "MARKET  /  虚拟行情与 K 线", Dock = DockStyle.Fill, ForeColor = pink, Font = new Font("Microsoft YaHei UI", 10, FontStyle.Bold), TextAlign = ContentAlignment.MiddleLeft };
+        var marketToolbar = new Panel { Dock = DockStyle.Fill, BackColor = panel2, Padding = new Padding(10, 6, 10, 6), Margin = new Padding(0, 0, 0, 6) };
+        var pairCaption = new Label { Text = "交易货币对", ForeColor = muted, AutoSize = true, Location = new Point(10, 12) };
+        pairBox.DropDownStyle = ComboBoxStyle.DropDownList;
+        pairBox.Items.AddRange(new object[] { "USD/JPY", "EUR/JPY", "GBP/JPY" });
+        pairBox.SelectedItem = state.SelectedPair;
+        pairBox.Font = new Font("Microsoft YaHei UI", 10, FontStyle.Bold);
+        pairBox.Size = new Size(145, 30);
+        pairBox.Location = new Point(95, 6);
+        StyleCombo(pairBox);
+        pairBox.Dock = DockStyle.None;
+        pairBox.Size = new Size(145, 30);
+        pairBox.Location = new Point(95, 6);
+        pairBox.SelectedIndexChanged += (_, _) => { if (!loading && pairBox.SelectedItem is string pair) { state.SelectedPair = pair; selectedPairValue.Text = pair; ResetChart(); UpdateAll(); SaveState(); } };
+        pairPrice.ForeColor = text; pairPrice.Font = new Font("Consolas", 17, FontStyle.Bold); pairPrice.AutoSize = true;
+        pairChange.ForeColor = green; pairChange.Font = new Font("Microsoft YaHei UI", 9, FontStyle.Bold); pairChange.AutoSize = true;
+        var quoteGroup = new FlowLayoutPanel { AutoSize = true, WrapContents = false, FlowDirection = FlowDirection.LeftToRight, BackColor = panel2, Anchor = AnchorStyles.Top | AnchorStyles.Right, Location = new Point(270, 6), Height = 32, Padding = new Padding(4, 0, 4, 0) };
+        quoteGroup.Controls.AddRange(new Control[] { pairPrice, pairChange });
+        marketToolbar.Controls.AddRange(new Control[] { pairCaption, pairBox, quoteGroup });
+        marketToolbar.Resize += (_, _) => quoteGroup.Location = new Point(Math.Max(260, marketToolbar.ClientSize.Width - quoteGroup.Width - 8), 6);
         chart.Dock = DockStyle.Fill;
         chart.BackColor = panel;
         chart.Paint += DrawChart;
-        chartCard.Controls.Add(chart);
+        marketLayout.Controls.Add(marketHeading, 0, 0);
+        marketLayout.Controls.Add(marketToolbar, 0, 1);
+        marketLayout.Controls.Add(chart, 0, 2);
+        chartCard.Controls.Add(marketLayout);
         body.Controls.Add(chartCard, 0, 0);
 
         var tradeCard = MakeCard("ORDER PANEL  /  下单");
@@ -172,19 +205,21 @@ public sealed class MainForm : Form
         }
         card.Controls.Add(layout);
 
-        AddTradeLabel(layout, 0, "交易货币对");
-        pairBox.DropDownStyle = ComboBoxStyle.DropDownList;
-        pairBox.Items.AddRange(new object[] { "USD/JPY", "EUR/JPY", "GBP/JPY" });
-        pairBox.SelectedItem = state.SelectedPair;
-        StyleCombo(pairBox);
-        pairBox.SelectedIndexChanged += (_, _) => { if (!loading && pairBox.SelectedItem is string s) { state.SelectedPair = s; ResetChart(); UpdateAll(); SaveState(); } };
-        layout.Controls.Add(pairBox, 1, 0);
+        AddTradeLabel(layout, 0, "当前交易货币对");
+        selectedPairValue.Text = state.SelectedPair;
+        selectedPairValue.ForeColor = pink;
+        selectedPairValue.Font = new Font("Microsoft YaHei UI", 11, FontStyle.Bold);
+        selectedPairValue.Dock = DockStyle.Fill;
+        selectedPairValue.TextAlign = ContentAlignment.MiddleLeft;
+        layout.Controls.Add(selectedPairValue, 1, 0);
 
         AddTradeLabel(layout, 1, "当前报价");
-        var quotePanel = new FlowLayoutPanel { Dock = DockStyle.Fill, BackColor = panel, WrapContents = false };
-        pairPrice.ForeColor = text; pairPrice.Font = new Font("Consolas", 16, FontStyle.Bold); pairPrice.AutoSize = true;
-        pairChange.ForeColor = green; pairChange.AutoSize = true; pairChange.Margin = new Padding(8, 8, 0, 0);
-        quotePanel.Controls.AddRange(new Control[] { pairPrice, pairChange });
+        var quotePanel = new FlowLayoutPanel { Dock = DockStyle.Fill, BackColor = panel, WrapContents = false, FlowDirection = FlowDirection.LeftToRight };
+        tradePriceValue.Text = "";
+        tradePriceValue.ForeColor = text;
+        tradePriceValue.Font = new Font("Consolas", 14, FontStyle.Bold);
+        tradePriceValue.AutoSize = true;
+        quotePanel.Controls.Add(tradePriceValue);
         layout.Controls.Add(quotePanel, 1, 1);
 
         AddTradeLabel(layout, 2, "买入价 / 卖出价");
@@ -319,6 +354,10 @@ public sealed class MainForm : Form
         grid.MultiSelect = false;
         grid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
         grid.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.None;
+        grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
+        grid.RowTemplate.Height = 26;
+        grid.ColumnHeadersHeight = 30;
+        grid.ScrollBars = ScrollBars.Both;
     }
 
     void LoadState()
@@ -355,15 +394,26 @@ public sealed class MainForm : Form
 
     void ResetChart()
     {
-        chartPrices.Clear();
-        var p = state.Prices.TryGetValue(state.SelectedPair, out var value) ? value : 149.5;
-        for (int i = 0; i < 55; i++) chartPrices.Add(p);
+        candles.Clear();
+        ticksInCandle = 0;
+        double price = CurrentPrice(state.SelectedPair);
+        // Seed a compact, synthetic history around the current virtual quote.
+        double cursor = price;
+        for (int i = 0; i < 48; i++)
+        {
+            double open = cursor;
+            double close = i == 47 ? price : Math.Max(0.01, open + (rng.NextDouble() - 0.5) * 0.035);
+            double high = Math.Max(open, close) + rng.NextDouble() * 0.012;
+            double low = Math.Max(0.01, Math.Min(open, close) - rng.NextDouble() * 0.012);
+            candles.Add(new Candle(open, high, low, close));
+            cursor = close;
+        }
         if (chart is not null) chart.Invalidate();
     }
 
     void TickMarket()
     {
-        foreach (var pair in state.Prices.Keys.ToList())
+        foreach (var pair in state.Prices.Keys.ToArray())
         {
             previousPrices[pair] = state.Prices[pair];
             double volatility = pair == "GBP/JPY" ? 0.055 : pair == "EUR/JPY" ? 0.040 : 0.035;
@@ -371,9 +421,17 @@ public sealed class MainForm : Form
             double move = (rng.NextDouble() - 0.5) * volatility + shock;
             state.Prices[pair] = Math.Max(0.01, state.Prices[pair] + move);
         }
-        chartPrices.Add(state.Prices[state.SelectedPair]);
-        if (chartPrices.Count > 80) chartPrices.RemoveAt(0);
-
+        double close = CurrentPrice(state.SelectedPair);
+        if (candles.Count == 0) candles.Add(new Candle(close, close, close, close));
+        var last = candles[^1];
+        candles[^1] = last with { High = Math.Max(last.High, close), Low = Math.Min(last.Low, close), Close = close };
+        ticksInCandle++;
+        if (ticksInCandle >= 5)
+        {
+            candles.Add(new Candle(close, close, close, close));
+            if (candles.Count > 64) candles.RemoveAt(0);
+            ticksInCandle = 0;
+        }
         UpdateAll();
         CheckMarginCall();
     }
@@ -464,67 +522,123 @@ public sealed class MainForm : Form
         marginLevelValue.Text = double.IsPositiveInfinity(level) ? "—" : level.ToString("N1") + "%";
         marginLevelValue.ForeColor = level < 100 ? red : text;
 
-        var price = CurrentPrice(state.SelectedPair);
+        double price = CurrentPrice(state.SelectedPair);
         pairPrice.Text = price.ToString("F3");
         double diff = price - (previousPrices.TryGetValue(state.SelectedPair, out var old) ? old : price);
         pairChange.Text = (diff >= 0 ? "▲ +" : "▼ ") + diff.ToString("F3");
         pairChange.ForeColor = diff >= 0 ? green : red;
+        selectedPairValue.Text = state.SelectedPair;
+        tradePriceValue.Text = price.ToString("F3");
         bidValue.Text = "BID " + (price - 0.01).ToString("F3") + "   ";
         askValue.Text = "ASK " + (price + 0.01).ToString("F3");
         chart.Invalidate();
 
-        positionsGrid.Rows.Clear();
-        foreach (var p in state.Positions.OrderByDescending(x => x.OpenedAt))
+        // Rebuild position rows only when the set of open positions changes.
+        var ordered = state.Positions.OrderByDescending(x => x.OpenedAt).ToArray();
+        bool rebuildPositions = positionsGrid.Rows.Count != ordered.Length;
+        if (!rebuildPositions)
+            for (int i = 0; i < ordered.Length; i++)
+                if (positionsGrid.Rows[i].Tag is not TradePosition existing || existing.Id != ordered[i].Id) { rebuildPositions = true; break; }
+        if (rebuildPositions)
         {
-            int i = positionsGrid.Rows.Add(p.Pair, p.Side == "BUY" ? "做多" : "做空", p.Lots.ToString("0.00"), p.Entry.ToString("F3"), CurrentPrice(p.Pair).ToString("F3"), Profit(p).ToString("N2"), UsedMargin(p).ToString("N2"));
-            positionsGrid.Rows[i].Tag = p;
-            positionsGrid.Rows[i].DefaultCellStyle.ForeColor = Profit(p) >= 0 ? green : red;
+            positionsGrid.Rows.Clear();
+            foreach (var p in ordered)
+            {
+                int row = positionsGrid.Rows.Add(p.Pair, p.Side == "BUY" ? "做多" : "做空", p.Lots.ToString("0.00"), p.Entry.ToString("F3"), CurrentPrice(p.Pair).ToString("F3"), Profit(p).ToString("N2"), UsedMargin(p).ToString("N2"));
+                positionsGrid.Rows[row].Tag = p;
+            }
         }
-        historyGrid.Rows.Clear();
-        foreach (var h in state.History.Take(100))
+        for (int i = 0; i < ordered.Length; i++)
         {
-            int i = historyGrid.Rows.Add(h.Time.ToString("HH:mm:ss"), h.Pair, h.Action, h.Lots.ToString("0.00"), h.Profit.ToString("N2"));
-            historyGrid.Rows[i].DefaultCellStyle.ForeColor = h.Profit >= 0 ? green : red;
+            var p = ordered[i]; double tradePnl = Profit(p);
+            var row = positionsGrid.Rows[i];
+            row.Cells[3].Value = p.Entry.ToString("F3");
+            row.Cells[4].Value = CurrentPrice(p.Pair).ToString("F3");
+            row.Cells[5].Value = tradePnl.ToString("N2");
+            row.Cells[6].Value = UsedMargin(p).ToString("N2");
+            row.DefaultCellStyle.ForeColor = tradePnl >= 0 ? green : red;
+        }
+
+        var recent = state.History.Take(100).ToArray();
+        bool rebuildHistory = historyGrid.Rows.Count != recent.Length ||
+            (recent.Length > 0 && (historyGrid.Rows.Count == 0 || !ReferenceEquals(historyGrid.Rows[0].Tag, recent[0])));
+        if (rebuildHistory)
+        {
+            historyGrid.Rows.Clear();
+            foreach (var h in recent)
+            {
+                int row = historyGrid.Rows.Add(h.Time.ToString("HH:mm:ss"), h.Pair, h.Action, h.Lots.ToString("0.00"), h.Profit.ToString("N2"));
+                historyGrid.Rows[row].Tag = h;
+                historyGrid.Rows[row].DefaultCellStyle.ForeColor = h.Profit >= 0 ? green : red;
+            }
         }
     }
 
     void DrawChart(object? sender, PaintEventArgs e)
     {
         var g = e.Graphics;
-        g.SmoothingMode = SmoothingMode.AntiAlias;
         g.Clear(panel);
         int w = chart.ClientSize.Width, h = chart.ClientSize.Height;
-        if (w < 100 || h < 100) return;
-        int left = 56, right = 18, top = 22, bottom = 34;
+        if (w < 140 || h < 120 || candles.Count < 2) return;
+        int left = 64, right = 72, top = 18, bottom = 30;
+        int plotW = w - left - right, plotH = h - top - bottom;
+        if (plotW <= 0 || plotH <= 0) return;
+        double min = double.MaxValue, max = double.MinValue;
+        for (int i = 0; i < candles.Count; i++) { min = Math.Min(min, candles[i].Low); max = Math.Max(max, candles[i].High); }
+        double pad = Math.Max((max - min) * 0.08, 0.015);
+        min -= pad; max += pad;
+        double range = Math.Max(0.000001, max - min);
+        float Y(double value) => top + (float)((max - value) / range) * plotH;
+        float slot = plotW / (float)candles.Count;
+        float bodyWidth = Math.Max(3f, Math.Min(11f, slot * 0.62f));
         using var gridPen = new Pen(Color.FromArgb(52, 53, 72), 1);
+        using var axisPen = new Pen(Color.FromArgb(75, 77, 98), 1);
+        using var textBrush = new SolidBrush(muted);
+        using var font = new Font("Consolas", 8f);
+        using var upPen = new Pen(green, 1.2f);
+        using var downPen = new Pen(red, 1.2f);
+        using var upBrush = new SolidBrush(green);
+        using var downBrush = new SolidBrush(red);
         for (int i = 0; i < 5; i++)
         {
-            int y = top + i * (h - top - bottom) / 4;
-            g.DrawLine(gridPen, left, y, w - right, y);
+            int y = top + i * plotH / 4;
+            g.DrawLine(gridPen, left, y, left + plotW, y);
+            double value = max - range * i / 4.0;
+            g.DrawString(value.ToString("F3"), font, textBrush, left + plotW + 6, y - 7);
         }
-        for (int i = 0; i < 7; i++)
+        for (int i = 0; i <= 6; i++)
         {
-            int x = left + i * (w - left - right) / 6;
-            g.DrawLine(gridPen, x, top, x, h - bottom);
+            int x = left + i * plotW / 6;
+            g.DrawLine(gridPen, x, top, x, top + plotH);
         }
-        var points = chartPrices.ToList();
-        if (points.Count < 2) return;
-        double min = points.Min(), max = points.Max();
-        if (max - min < 0.001) { min -= 0.05; max += 0.05; }
-        float X(int i) => left + i * (w - left - right) / (float)(points.Count - 1);
-        float Y(double p) => top + (float)((max - p) / (max - min)) * (h - top - bottom);
-        using var path = new GraphicsPath();
-        path.AddLines(points.Select((p, i) => new PointF(X(i), Y(p))).ToArray());
-        using var linePen = new Pen(pink, 2.3f);
-        g.DrawPath(linePen, path);
-        using var dotBrush = new SolidBrush(pink);
-        g.FillEllipse(dotBrush, X(points.Count - 1) - 4, Y(points[^1]) - 4, 8, 8);
-        using var font = new Font("Consolas", 8);
-        using var brush = new SolidBrush(muted);
-        g.DrawString(max.ToString("F3"), font, brush, 4, top - 5);
-        g.DrawString(min.ToString("F3"), font, brush, 4, h - bottom - 8);
-        g.DrawString(state.SelectedPair + "  ·  虚拟价格曲线", new Font("Microsoft YaHei UI", 9, FontStyle.Bold), new SolidBrush(text), left, 2);
-        g.DrawString("最新 " + points[^1].ToString("F3"), font, dotBrush, Math.Max(left, w - 130), top + 5);
-        g.DrawString("随机行情，不代表真实汇率", font, brush, left, h - bottom + 10);
+        g.DrawLine(axisPen, left, top + plotH, left + plotW, top + plotH);
+        for (int i = 0; i < candles.Count; i++)
+        {
+            var c = candles[i];
+            float x = left + (i + 0.5f) * slot;
+            bool up = c.Close >= c.Open;
+            var pen = up ? upPen : downPen;
+            var brush = up ? upBrush : downBrush;
+            g.DrawLine(pen, x, Y(c.High), x, Y(c.Low));
+            float yOpen = Y(c.Open), yClose = Y(c.Close);
+            float bodyTop = Math.Min(yOpen, yClose);
+            float bodyHeight = Math.Max(1.5f, Math.Abs(yOpen - yClose));
+            g.FillRectangle(brush, x - bodyWidth / 2, bodyTop, bodyWidth, bodyHeight);
+        }
+        var last = candles[^1];
+        using var currentPen = new Pen(pink, 1) { DashStyle = DashStyle.Dash };
+        g.DrawLine(currentPen, left, Y(last.Close), left + plotW, Y(last.Close));
+        using var currentBrush = new SolidBrush(pink);
+        using var chartTitleFont = new Font("Microsoft YaHei UI", 9, FontStyle.Bold);
+        g.DrawString(state.SelectedPair + "  ·  OHLC 蜡烛图", chartTitleFont, currentBrush, left, 1);
+        g.DrawString("最新 " + last.Close.ToString("F3"), font, currentBrush, left + plotW - 86, Math.Max(top, Y(last.Close) - 16));
+        g.DrawString("随机模拟行情 · 非真实汇率", font, textBrush, left, h - bottom + 8);
     }
+
+}
+
+
+internal sealed class BufferedPanel : Panel
+{
+    public BufferedPanel() { DoubleBuffered = true; ResizeRedraw = true; }
 }
