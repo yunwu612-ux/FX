@@ -45,8 +45,8 @@ public sealed class MainForm : Form
 
     public MainForm()
     {
-        Text = "FX Simulator V1.0 | 虚拟外汇交易终端";
-        MinimumSize = new Size(1080, 720);
+        Text = "FX Simulator V1.1 | 虚拟外汇交易终端";
+        MinimumSize = new Size(1080, 760);
         Size = new Size(1360, 850);
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = bg;
@@ -78,7 +78,7 @@ public sealed class MainForm : Form
         var header = new Panel { Dock = DockStyle.Fill, BackColor = bg };
         var title = new Label { Text = "FX  /  SIMULATOR", Font = new Font("Microsoft YaHei UI", 19, FontStyle.Bold), ForeColor = pink, AutoSize = true, Location = new Point(4, 3) };
         var subtitle = new Label { Text = "虚拟市场 · 自由交易 · 风险与保证金模拟", ForeColor = muted, AutoSize = true, Location = new Point(7, 36) };
-        var version = new Label { Text = "V1.0  •  OFFLINE MODE", ForeColor = muted, AutoSize = true, Anchor = AnchorStyles.Top | AnchorStyles.Right };
+        var version = new Label { Text = "V1.1  •  OFFLINE MODE", ForeColor = muted, AutoSize = true, Anchor = AnchorStyles.Top | AnchorStyles.Right };
         header.Controls.AddRange(new Control[] { title, subtitle, version });
         header.Resize += (_, _) => version.Location = new Point(header.ClientSize.Width - version.Width - 8, 18);
         root.Controls.Add(header, 0, 0);
@@ -152,10 +152,24 @@ public sealed class MainForm : Form
 
     void BuildTradePanel(Panel card)
     {
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 10, BackColor = panel, Padding = new Padding(2, 4, 2, 2) };
+        var layout = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 2,
+            RowCount = 10,
+            BackColor = panel,
+            Padding = new Padding(2, 4, 2, 2),
+            GrowStyle = TableLayoutPanelGrowStyle.FixedSize
+        };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 39));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 61));
-        for (int i = 0; i < 10; i++) layout.RowStyles.Add(new RowStyle(SizeType.Percent, 10));
+        // Reserve enough vertical space for the action buttons so their labels stay readable.
+        // Five input rows use 8% each, four action rows 13% each, and the note row 8%.
+        for (int i = 0; i < 10; i++)
+        {
+            float height = i <= 4 ? 8f : i <= 8 ? 13f : 8f;
+            layout.RowStyles.Add(new RowStyle(SizeType.Percent, height));
+        }
         card.Controls.Add(layout);
 
         AddTradeLabel(layout, 0, "交易货币对");
@@ -195,16 +209,16 @@ public sealed class MainForm : Form
         leverageBox.SelectedIndexChanged += (_, _) => { if (!loading && leverageBox.SelectedItem is string s && double.TryParse(s.TrimEnd('x'), out var v)) { state.Leverage = v; SaveState(); UpdateAll(); } };
         layout.Controls.Add(leverageBox, 1, 4);
 
-        var buy = MakeButton("买入 / 做多  ▲", green);
+        var buy = MakeButton("买入 / 做多  ▲", Color.FromArgb(20, 160, 105), Color.FromArgb(34, 190, 128));
         buy.Click += (_, _) => OpenPosition("BUY");
         layout.Controls.Add(buy, 0, 5); layout.SetColumnSpan(buy, 2);
-        var sell = MakeButton("卖出 / 做空  ▼", red);
+        var sell = MakeButton("卖出 / 做空  ▼", Color.FromArgb(205, 48, 70), Color.FromArgb(232, 65, 88));
         sell.Click += (_, _) => OpenPosition("SELL");
         layout.Controls.Add(sell, 0, 6); layout.SetColumnSpan(sell, 2);
-        var close = MakeButton("平掉所选持仓", pink);
+        var close = MakeButton("平掉所选持仓", pink, Color.FromArgb(255, 112, 169));
         close.Click += (_, _) => CloseSelectedPosition();
         layout.Controls.Add(close, 0, 7); layout.SetColumnSpan(close, 2);
-        var closeAll = MakeButton("全部平仓", Color.FromArgb(95, 96, 120));
+        var closeAll = MakeButton("全部平仓", Color.FromArgb(75, 77, 101), Color.FromArgb(95, 98, 128));
         closeAll.Click += (_, _) => { foreach (var p in state.Positions.ToList()) ClosePosition(p, "手动平仓"); };
         layout.Controls.Add(closeAll, 0, 8); layout.SetColumnSpan(closeAll, 2);
 
@@ -226,11 +240,30 @@ public sealed class MainForm : Form
         box.FlatStyle = FlatStyle.Flat;
     }
 
-    Button MakeButton(string label, Color color) => new()
+    Button MakeButton(string label, Color color, Color hoverColor) => new()
     {
-        Text = label, Dock = DockStyle.Fill, FlatStyle = FlatStyle.Flat,
-        BackColor = color, ForeColor = bg, Font = new Font("Microsoft YaHei UI", 10, FontStyle.Bold),
-        Margin = new Padding(2, 4, 2, 4), Cursor = Cursors.Hand
+        Text = label,
+        Dock = DockStyle.Fill,
+        FlatStyle = FlatStyle.Flat,
+        BackColor = color,
+        ForeColor = Color.White,
+        Font = new Font("Microsoft YaHei UI", 10, FontStyle.Bold),
+        TextAlign = ContentAlignment.MiddleCenter,
+        AutoEllipsis = false,
+        MinimumSize = new Size(0, 32),
+        Margin = new Padding(2, 2, 2, 2),
+        Cursor = Cursors.Hand,
+        UseVisualStyleBackColor = false,
+        FlatAppearance =
+        {
+            BorderSize = 1,
+            BorderColor = Color.FromArgb(220, 230, 240),
+            MouseOverBackColor = hoverColor,
+            MouseDownBackColor = Color.FromArgb(
+                Math.Max(0, color.R - 25),
+                Math.Max(0, color.G - 25),
+                Math.Max(0, color.B - 25))
+        }
     };
 
     void BuildPositionsGrid()
